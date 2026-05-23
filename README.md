@@ -23,8 +23,9 @@ Browser (userscript)          Host nginx                     Backend (Node)
 |------|---------|
 | `server.js` | Node.js backend — receives text + instruction, calls AI API |
 | `nginx.conf` | Nginx location block to proxy `/api/llm-edit` → backend |
-| `runit-run` | Runit service script for auto-start inside Overleaf container |
-| `userscript.js` | Tampermonkey/Greasemonkey script that adds the editor button |
+| `overleaf-llm-edit.service` | Systemd service unit for production use |
+| `runit-run` | Runit service script for Docker-based setups |
+| `overleaf-ai-editor.user.js` | Userscript for Tampermonkey / Violentmonkey |
 | `.env.example` | Environment variables template |
 
 ## Setup
@@ -42,9 +43,17 @@ source .env
 LLM_EDIT_PORT=3099 node /opt/llm-edit/server.js
 ```
 
+Or install as a systemd service (auto-start on boot, auto-restart on crash):
+
+```bash
+sudo cp overleaf-llm-edit.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now overleaf-llm-edit.service
+```
+
 ### 2. Nginx (host)
 
-Add this location block to your Overleaf nginx site config:
+Add this location block to your Overleaf **host** nginx site config:
 
 ```nginx
 location /api/llm-edit {
@@ -55,6 +64,8 @@ location /api/llm-edit {
     proxy_read_timeout 60s;
 }
 ```
+
+> ⚠️ **Important:** The proxy must be on the **host** nginx (not inside the Overleaf Docker container), because the backend runs on the host. If the container is restarted, the host nginx config survives.
 
 Reload nginx:
 
@@ -77,31 +88,43 @@ LLM_EDIT_PROVIDER=anthropic
 LLM_EDIT_MODEL=claude-sonnet-4-6
 ```
 
-### 4. Runit (optional — inside Docker container)
+### 4. Userscript (browser)
 
-If running Overleaf in Docker, copy `runit-run` to the container:
+**Recommended:** Install [Violentmonkey](https://violentmonkey.github.io/) — it works out of the box on all browsers including Brave without extra permissions.
 
-```bash
-docker cp runit-run sharelatex:/etc/service/llm-edit-overleaf/run
-docker exec sharelatex chmod +x /etc/service/llm-edit-overleaf/run
-docker exec sharelatex sv start llm-edit-overleaf
-```
+> ⚠️ **Brave users:** Tampermonkey requires enabling "Allow User Scripts" in `brave://extensions/` → Tampermonkey Details. If that option is not available, use Violentmonkey instead.
 
-> **Note:** This is optional — the backend can run on the host. Use runit only if you
-> want the backend inside the container (requires exposing port 3099).
+1. Install Violentmonkey (or Tampermonkey) for your browser
+2. Open the raw userscript URL in the browser:
+   
+   **<https://raw.githubusercontent.com/tagomago-me/overleaf-llm-edit/main/overleaf-ai-editor.user.js>**
+3. Violentmonkey/Tampermonkey will detect the userscript and prompt to install — accept
+4. Edit the `@match` URL in the script header if your Overleaf URL differs from `https://overleaf.tagomago.me/project/*`
 
-### 5. Userscript (browser)
+### 5. Usage
 
-1. Install [Tampermonkey](https://www.tampermonkey.net) or [Violentmonkey](https://violentmonkey.github.io/)
-2. Open `userscript.js` in your browser
-3. Tampermonkey will prompt to install — accept
-4. Edit the `@match` URL in the script header if your Overleaf URL differs
+Open any project in the Overleaf **Code Editor** (not Visual Editor):
 
-### 6. Cron (optional — keeps backend alive)
+| Method | Action |
+|--------|--------|
+| **Toolbar** | Click the `🤖 AI` button in the Code Editor toolbar |
+| **Right-click** | Select text → right-click → floating **🤖 AI Edit** button appears |
+| **Keyboard** | Select text and press `Ctrl+Shift+E` |
+
+A modal opens where you can:
+- Type an editing instruction (e.g., "rewrite concisely", "translate to Portuguese", "fix grammar")
+- Choose the AI model from a dropdown (Anthropic Claude, OpenAI GPT, DeepSeek)
+- Choose a quick action (Concise, Fix Grammar, Formal, Simplify)
+
+### 6. Keep backend alive (cron fallback)
+
+If systemd is not available, use a cron job to restart the server automatically:
 
 ```cron
 */5 * * * * pgrep -x ".*node.*/opt/llm-edit/server.js" >/dev/null || (source /path/to/.env && LLM_EDIT_PORT=3099 nohup node /opt/llm-edit/server.js >> /var/log/llm-edit-overleaf.log 2>&1 &)
 ```
+
+> ⚠️ Use `pgrep -x` (exact match) not `pgrep -f` to avoid the cron matching its own command string.
 
 ## Configuration
 
@@ -114,6 +137,29 @@ Set environment variables to control behavior:
 | `LLM_EDIT_MODEL` | `claude-sonnet-4-6` | Default model |
 
 Supported providers: `openai`, `anthropic`, `deepseek`.
+
+Models tested:
+- `claude-sonnet-4-6` (Anthropic, default)
+- `gpt-4o` (OpenAI)
+- `deepseek-chat` (DeepSeek)
+
+## Troubleshooting
+
+**Userscript not appearing in Overleaf?**
+- Make sure you're using **Code Editor** mode, not Visual Editor
+- Check that your browser supports userscripts (Violentmonkey recommended for Brave)
+- Verify the `@match` URL in the script matches your Overleaf URL
+- For Brave + Tampermonkey: enable "Allow User Scripts" in `brave://extensions/` → Tampermonkey
+- Reload the Overleaf page after installing
+
+**502 Bad Gateway when clicking AI Edit?**
+- Check that the backend server is running: `curl http://127.0.0.1:3099/`
+- Check the nginx config has the `/api/llm-edit` location
+- Check nginx logs: `tail -f /var/log/nginx/error.log`
+
+**Backend keeps dying?**
+- Install as systemd service (auto-restart)
+- Or use the cron fallback
 
 ## License
 
