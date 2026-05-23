@@ -1,0 +1,16 @@
+[Unit]
+Description=Overleaf LLM Edit backend
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=mauro
+EnvironmentFile=/home/mauro/.openclaw/.env
+Environment=LLM_EDIT_PORT=3099
+ExecStart=/usr/bin/node /opt/llm-edit/server.js
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

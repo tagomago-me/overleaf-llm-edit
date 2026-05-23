@@ -1,0 +1,11 @@
+#!/bin/bash
+# llm-edit-overleaf — Runit service for AI paragraph editing backend
+# Runs inside the Overleaf Docker container
+
+source /home/mauro/.openclaw/.env 2>/dev/null || true
+export LLM_EDIT_PORT=3099
+
+# The backend runs on the host at 127.0.0.1:3099
+# This script ensures the service is monitored by runsv
+exec 2>&1
+exec /usr/bin/node /opt/llm-edit/server.js
